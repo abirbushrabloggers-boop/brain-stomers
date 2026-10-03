@@ -1,0 +1,528 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+import '../models/question_models.dart';
+import '../services/ai_service.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _selectedIndex = 0;
+  final _pages = const [
+    AskQuestionScreen(),
+    ImageQuestionScreen(),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Brain Stomers'),
+        centerTitle: true,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Colors.white,
+      ),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: _pages,
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (value) {
+          setState(() => _selectedIndex = value);
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.chat_bubble_outline_rounded),
+            selectedIcon: Icon(Icons.chat_bubble_rounded),
+            label: 'Question',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.camera_alt_outlined),
+            selectedIcon: Icon(Icons.camera_alt_rounded),
+            label: 'Image Quiz',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class AskQuestionScreen extends StatefulWidget {
+  const AskQuestionScreen({super.key});
+
+  @override
+  State<AskQuestionScreen> createState() => _AskQuestionScreenState();
+}
+
+class _AskQuestionScreenState extends State<AskQuestionScreen> {
+  final _questionController = TextEditingController();
+  final _contextController = TextEditingController();
+  final _aiService = AiService();
+  bool _isLoading = false;
+  String _answer = 'আপনার উত্তর এখানে দেখানো হবে.';
+
+  Future<void> _submitQuestion() async {
+    final question = _questionController.text.trim();
+
+    if (question.isEmpty) {
+      _showSnack('দয়া করে প্রশ্ন লিখুন।');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    final answer = await _aiService.askQuestion(
+      question: question,
+      context: _contextController.text.trim(),
+    );
+
+    if (mounted) {
+      setState(() {
+        _answer = answer;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'কোনো প্রশ্ন করুন',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _questionController,
+            maxLines: 5,
+            decoration: InputDecoration(
+              hintText: 'যেমন: ক্রিয়াপদ কী?\nওই কাকে বলে?\nঅণু কি?',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _contextController,
+            maxLines: 2,
+            decoration: InputDecoration(
+              hintText: 'ঐচ্ছিক: বই, অধ্যায়, বা অতিরিক্ত তথ্য',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _isLoading ? null : _submitQuestion,
+              icon: _isLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.smart_toy_rounded),
+              label: Text(_isLoading ? 'উত্তর দিচ্ছি...' : 'উত্তর পান'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            'উত্তর',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Text(
+              _answer,
+              style: const TextStyle(fontSize: 16, height: 1.7),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+}
+
+class ImageQuestionScreen extends StatefulWidget {
+  const ImageQuestionScreen({super.key});
+
+  @override
+  State<ImageQuestionScreen> createState() => _ImageQuestionScreenState();
+}
+
+class _ImageQuestionScreenState extends State<ImageQuestionScreen> {
+  final ImagePicker _picker = ImagePicker();
+  final AiService _aiService = AiService();
+
+  File? _selectedImage;
+  bool _isLoading = false;
+  GeneratedQuestionSet? _generatedSet;
+
+  final List<String> _classLevels = ['Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'];
+  final List<String> _difficulties = ['Easy', 'Moderate', 'Hard'];
+
+  String _selectedClass = 'Class 8';
+  String _selectedDifficulty = 'Moderate';
+  int _questionCount = 5;
+
+  Future<void> _pickImage(ImageSource source) async {
+    final status = source == ImageSource.camera
+        ? await Permission.camera.request()
+        : await Permission.photos.request();
+
+    if (status.isDenied || status.isPermanentlyDenied) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('ক্যামেরা/গ্যালারি খুলতে পারমিশন দরকার। সেটিংসে গিয়ে অনুমতি দিন।'),
+        ),
+      );
+      return;
+    }
+
+    final image = await _picker.pickImage(source: source);
+    if (image == null) return;
+
+    setState(() {
+      _selectedImage = File(image.path);
+      _generatedSet = null;
+    });
+  }
+
+  Future<void> _generateQuestions() async {
+    if (_selectedImage == null) {
+      _showSnack('প্রথমে বইয়ের ছবি নির্বাচন করুন।');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    final result = await _aiService.generateQuestionsFromImage(
+      imagePath: _selectedImage!.path,
+      classLevel: _selectedClass,
+      difficulty: _selectedDifficulty,
+      count: _questionCount,
+    );
+
+    if (mounted) {
+      setState(() {
+        _generatedSet = result;
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _copyAllQuestions() {
+    if (_generatedSet == null) {
+      _showSnack('প্রথমে প্রশ্ন তৈরি করুন।');
+      return;
+    }
+
+    final buffer = StringBuffer();
+
+    void addQuestions(List<QuizQuestion> items, String heading) {
+      if (items.isEmpty) return;
+      buffer.writeln('--- $heading ---');
+      for (var i = 0; i < items.length; i++) {
+        final item = items[i];
+        buffer.writeln('${i + 1}. ${item.question}');
+        if (item.options.isNotEmpty) {
+          for (var j = 0; j < item.options.length; j++) {
+            final option = item.options[j];
+            buffer.writeln('   ${String.fromCharCode(65 + j)}. $option');
+          }
+        }
+        buffer.writeln('   সঠিক উত্তর: ${item.correctAnswer}');
+        buffer.writeln('   ব্যাখ্যা: ${item.explanation}');
+        buffer.writeln('');
+      }
+    }
+
+    addQuestions(_generatedSet!.mcq, 'MCQ');
+    addQuestions(_generatedSet!.creative, 'Creative');
+    addQuestions(_generatedSet!.short, 'Short');
+
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    _showSnack('সব প্রশ্ন কপি হয়েছে।');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'বইয়ের ছবি থেকে প্রশ্ন বানান',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _pickImage(ImageSource.camera),
+                  icon: const Icon(Icons.camera_alt_rounded),
+                  label: const Text('ক্যামেরা'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _pickImage(ImageSource.gallery),
+                  icon: const Icon(Icons.photo_library_rounded),
+                  label: const Text('গ্যালারি'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_selectedImage != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.file(
+                _selectedImage!,
+                height: 220,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            )
+          else
+            Container(
+              height: 220,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: const Center(
+                child: Text('কোনো ছবি নেই\nক্যামেরা বা গ্যালারি থেকে নিন'),
+              ),
+            ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _selectedClass,
+                  decoration: InputDecoration(
+                    labelText: 'শ্রেণি',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  items: _classLevels
+                      .map((item) => DropdownMenuItem(value: item, child: Text(item)))
+                      .toList(),
+                  onChanged: (value) => setState(() => _selectedClass = value ?? _selectedClass),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _selectedDifficulty,
+                  decoration: InputDecoration(
+                    labelText: 'কাঠিন্য',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  items: _difficulties
+                      .map((item) => DropdownMenuItem(value: item, child: Text(item)))
+                      .toList(),
+                  onChanged: (value) => setState(() => _selectedDifficulty = value ?? _selectedDifficulty),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Text('প্রশ্নের সংখ্যা: ', style: TextStyle(fontWeight: FontWeight.bold)),
+              Expanded(
+                child: Slider(
+                  value: _questionCount.toDouble(),
+                  min: 3,
+                  max: 10,
+                  divisions: 7,
+                  label: _questionCount.toString(),
+                  onChanged: (value) => setState(() => _questionCount = value.round()),
+                ),
+              ),
+              Text(_questionCount.toString()),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _isLoading ? null : _generateQuestions,
+              icon: _isLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.quiz_rounded),
+              label: Text(_isLoading ? 'প্রশ্ন তৈরি হচ্ছে...' : 'প্রশ্ন বানান'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          if (_generatedSet != null) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'ফলাফল',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                TextButton.icon(
+                  onPressed: _copyAllQuestions,
+                  icon: const Icon(Icons.copy_all_rounded),
+                  label: const Text('সব কপি করুন'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _buildQuestionGroup('MCQ', _generatedSet!.mcq),
+            _buildQuestionGroup('Srijonshil', _generatedSet!.creative),
+            _buildQuestionGroup('সংক্ষিপ্ত', _generatedSet!.short),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestionGroup(String title, List<QuizQuestion> questions) {
+    if (questions.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 18),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        ...questions.asMap().entries.map((entry) {
+          final index = entry.key;
+          final question = entry.value;
+
+          return Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                )
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${index + 1}. ${question.question}',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                if (question.options.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  ...question.options.asMap().entries.map((optionEntry) {
+                    final optionIndex = optionEntry.key;
+                    final optionText = optionEntry.value;
+                    final optionLabel = String.fromCharCode(65 + optionIndex);
+
+                    return RadioListTile<String>(
+                      title: Text('$optionLabel. $optionText'),
+                      value: optionText,
+                      groupValue: question.correctAnswer,
+                      onChanged: null,
+                    );
+                  }),
+                ],
+                const SizedBox(height: 8),
+                Text(
+                  'সঠিক উত্তর: ${question.correctAnswer}',
+                  style: const TextStyle(
+                    color: Colors.green,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text('ব্যাখ্যা: ${question.explanation}'),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+}

@@ -1,0 +1,5 @@
+package com.brainstomers.app
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
